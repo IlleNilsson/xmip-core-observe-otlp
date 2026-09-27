@@ -36,7 +36,8 @@ as a trace.
 hands it each snapshot it publishes, `Exporter::offer(Arc<Snapshot>)` —
 a lock and a handle, nothing written on the node's thread. The sender
 wakes at once, writes the request and posts it to the collector:
-`transport-http`'s `endpoint::exchange`, so HTTP/2 where ALPN agrees it,
+`transport-http`'s `endpoint::Connections`, on the connection the export
+before it opened, so HTTP/2 where ALPN agrees it,
 HTTP/1.1 otherwise, HTTP/2 over cleartext where `h2c` says the collector
 speaks it, and TLS for `https://` through `xmip-core-library-tls`. The
 endpoint is the collector's URL, port 4318 where it names none and

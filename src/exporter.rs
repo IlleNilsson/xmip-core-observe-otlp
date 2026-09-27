@@ -5,9 +5,9 @@
 //! shared handle it publishes, `Arc<Snapshot>`, never a copy — and that is
 //! all the node's thread does: a lock and a handle. The sender wakes on it
 //! at once, writes the request and posts it to the collector over
-//! `transport-http`'s `endpoint::exchange` — HTTP/2 where ALPN agrees it,
-//! HTTP/1.1 otherwise, TLS for `https://` — within the timeout it was
-//! given. So an export goes on every change, with no interval: OTLP asks
+//! `transport-http`'s `endpoint::Connections` — HTTP/2 where ALPN agrees
+//! it, HTTP/1.1 otherwise, TLS for `https://` — within the timeout it was
+//! given, on the connection the export before it opened. So an export goes on every change, with no interval: OTLP asks
 //! for none, and a collector batches what it receives itself. One snapshot
 //! waits at a time: one offered while one waits replaces it, the newer
 //! being the truer, and the replaced one is counted. A collector that is
@@ -21,6 +21,7 @@ use std::time::Duration;
 use net::Endpoint;
 use net::http::Request;
 use observe::Snapshot;
+use transport_http::endpoint::{Connections, Offer};
 
 use crate::metrics::write_request;
 use crate::resource::Resource;
@@ -121,6 +122,7 @@ impl Exporter {
             h2c: otlp.h2c,
             timeout: otlp.timeout,
             resource: otlp.resource,
+            connections: Connections::new(),
         };
         let shared = Arc::clone(&outbox);
         let sender = std::thread::Builder::new()
@@ -181,6 +183,8 @@ struct Target {
     h2c: bool,
     timeout: Duration,
     resource: Resource,
+    /// The connection kept to the collector between exports.
+    connections: Connections,
 }
 
 /// Take each export as it is offered and send it, until closed and none
@@ -227,10 +231,10 @@ fn send(target: &Target, body: Vec<u8>) -> (Result<Option<Rejected>, String>, Ve
         .header("Host", &target.endpoint.authority())
         .header("Content-Type", PROTOBUF);
     request.body = body;
-    let answer = transport_http::endpoint::exchange(
+    let answer = target.connections.exchange(
         &target.endpoint,
         Some(target.timeout),
-        target.h2c,
+        Offer::agreed(target.h2c),
         &request,
     );
     let body = mem::take(&mut request.body);
