@@ -1,25 +1,35 @@
 # Its own workspace root, so this repository builds on its own.
-#
-# Every module repository carries this and the template did not, which stopped
-# mattering the moment the template stopped sitting beside the estate: nested at
-# template/rust, cargo walked up, found the root workspace and refused to build.
-#
-# It would have bitten a generated repository the same way. A template that does
-# not obey the estate's rules produces repositories that start out breaking
-# them — doc/governance/rust-style.md section 4.
 [workspace]
 
 [package]
-name = "xmip-template-rust"
+name = "xmip-core-observe-otlp"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/IlleNilsson/xmip-template-rust"
-description = "Starter template for a Rust Xmip module repository."
+repository = "https://github.com/IlleNilsson/xmip-core-observe-otlp"
+description = "OTLP exporter: a node's moods, severities and counted figures as OpenTelemetry metrics, protobuf over OTLP/HTTP (POST /v1/metrics) on every published change, HTTP/2 where the collector agrees it by ALPN and HTTPS through xmip-core-library-tls, from a thread of its own. A xmip-core-observe technology."
 publish = false
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+# A Technology depends on its parent Capability, never the reverse
+# (repository-model.md). The snapshot and the figures an export writes are
+# observe's; this crate writes them as OTLP and names none of its own.
+observe = { package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
+# The protobuf wire format, written and walked: the one writer the estate
+# has, not prost.
+message = { package = "xmip-core-message", git = "https://github.com/IlleNilsson/xmip-core-message", branch = "main" }
+# The varint a collector's partial success counts its rejected points in.
+codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
+# The collector's URL (`net::Endpoint`) and the request and answer HTTP
+# carries (`net::http`).
+net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main" }
+# The connection to the collector and the version it speaks: HTTP/2 where
+# ALPN agrees it, HTTP/1.1 otherwise, TLS through xmip-core-library-tls
+# (`endpoint::exchange`). Not a second client.
+transport-http = { package = "xmip-core-transport-http", git = "https://github.com/IlleNilsson/xmip-core-transport-http", branch = "main", features = ["tls"] }
 
 [lints.rust]
 # forbid, not deny: a module has no business writing unsafe. The one exception
@@ -40,3 +50,6 @@ missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 unwrap_used = "warn"
 expect_used = "allow"
+
+[profile.dev.package."*"]
+opt-level = 3
