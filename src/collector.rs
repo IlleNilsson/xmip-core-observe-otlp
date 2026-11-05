@@ -128,7 +128,7 @@ fn metric(bytes: &[u8]) -> Metric {
 }
 
 /// The `index`th Receive Location, beneath the test cluster's first node,
-/// read from its `xmip.toml` once.
+/// read from its `cluster.xmip` once.
 fn scope(index: usize) -> String {
     static NODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let node = NODE.get_or_init(|| configure::fixture::test_cluster().node_scope(0));
