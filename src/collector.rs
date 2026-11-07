@@ -130,9 +130,9 @@ fn metric(bytes: &[u8]) -> Metric {
 /// The `index`th Receive Location, beneath the test cluster's first node,
 /// read from its `cluster.xmip` once.
 fn scope(index: usize) -> String {
-    static NODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let node = NODE.get_or_init(|| configure::fixture::test_cluster().node_scope(0));
-    format!("{node}/receive/location-{index:04}")
+    static NODE: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| configure::fixture::test_cluster().node_scope(0));
+    format!("{}/receive/location-{index:04}", *NODE)
 }
 
 /// `scopes` Receive Locations, each with a mood and a count of every kind.
