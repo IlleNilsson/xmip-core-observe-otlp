@@ -16,8 +16,11 @@ to observe reaches the collector and the Prometheus endpoint alike.
 resource — the node, `service.name` `xmip` and `service.instance.id` its
 name (`Resource::node`, more attributes by `with`) — and one
 instrumentation scope, this crate, holding a metric per figure with
-points. A level is a `Gauge`; a count over its window a `Sum`, delta and
-monotonic, each point's start the window's opening. Every point carries
+points. A level is a `Gauge`; a count over its window a `Sum`, cumulative
+and monotonic, each point's start the window's opening and its value
+everything counted since: an export goes on every change while the window
+is still open, and a delta would make a collector add each export's
+count to the one before. Every point carries
 the attribute `scope`, the Xmip URI it is of, and a mood its word as
 `mood`. A mood's value is its rank, `fine` 0 to `holding` 6. The field
 numbers are opentelemetry-proto's, each named where it is written. It is

@@ -98,8 +98,9 @@ fn metric(bytes: &[u8]) -> Metric {
     let data = gauge.first().or(sum.first()).expect("a gauge or a sum");
     let data_fields = walk(data);
     if !sum.is_empty() {
-        // AGGREGATION_TEMPORALITY_DELTA is 1; is_monotonic true is 1.
-        assert_eq!(field(data, &data_fields, 2, WireType::Varint), [&[1u8][..]]);
+        // AGGREGATION_TEMPORALITY_CUMULATIVE is 2; is_monotonic true is 1.
+        // A delta, 1, was added by a collector to every export before it.
+        assert_eq!(field(data, &data_fields, 2, WireType::Varint), [&[2u8][..]]);
         assert_eq!(field(data, &data_fields, 3, WireType::Varint), [&[1u8][..]]);
     }
     let points = field(data, &data_fields, 1, WireType::Len)
@@ -206,13 +207,37 @@ fn every_figure_reaches_the_collector_by_the_specification_s_field_numbers() {
 
     let bytes_metric = &metrics[5];
     assert_eq!(bytes_metric.unit, "By");
-    assert!(bytes_metric.sum, "a window is a delta sum");
+    assert!(bytes_metric.sum, "a window is a cumulative sum");
     assert_eq!(bytes_metric.points[2].value, 2);
     assert_eq!(
         (bytes_metric.points[2].start, bytes_metric.points[2].time),
         (Some(500), 1_000)
     );
     assert!(!metrics[6].sum, "what awaits another try is a level");
+}
+
+#[test]
+fn a_window_exported_again_as_it_grows_is_read_once() {
+    // The node's window stays open and every export carries it: three
+    // Streams, then five. Written as a delta, a collector held eight.
+    let export = |value: u64| {
+        let mut snapshot = Snapshot::new();
+        snapshot.record_count(Count {
+            scope: scope(0),
+            counted: Counted::Streams,
+            value,
+            window_start_unix_nanos: 500,
+            window_end_unix_nanos: 1_000,
+            observed_unix_nanos: 1_000,
+        });
+        let mut bytes = Vec::new();
+        write_request(&mut bytes, &snapshot, &Resource::node("n1"));
+        // `metric` holds every sum to cumulative temporality.
+        read(&bytes).2.remove(0)
+    };
+    let (first, second) = (export(3), export(5));
+    assert_eq!(first.points[0].start, second.points[0].start, "one window");
+    assert_eq!(second.points[0].value, 5, "everything since it opened");
 }
 
 #[test]

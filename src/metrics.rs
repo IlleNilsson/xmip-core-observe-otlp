@@ -5,8 +5,17 @@
 //! One resource — the node — and one instrumentation scope — this crate —
 //! holding one metric per figure observe names (`observe::FIGURES`) that
 //! has points. A gauge figure is an OTLP `Gauge`; a window figure a `Sum`,
-//! delta and monotonic, its point's start the window's opening. Every point
-//! carries the scope it is of, and a mood's word where it has one.
+//! cumulative and monotonic, its point's start the window's opening and its
+//! value everything counted since. Every point carries the scope it is of,
+//! and a mood's word where it has one.
+//!
+//! **Cumulative, never delta.** An export goes on every change, and each
+//! carries the count of a window still open — the node's counts run from
+//! its start — so the same Streams are in every export after they arrive.
+//! A delta a collector adds to what it holds: a Stream counted once by the
+//! node would be counted again by every export that followed. A cumulative point says what its window
+//! holds; a collector takes the newest, and a window that opens anew is a
+//! reset.
 //!
 //! The field numbers are opentelemetry-proto's, `opentelemetry/proto/`
 //! `collector/metrics/v1/metrics_service.proto`, `metrics/v1/metrics.proto`,
@@ -50,8 +59,8 @@ const DATA_POINTS: u32 = 1;
 const SUM_TEMPORALITY: u32 = 2;
 /// `Sum.is_monotonic`.
 const SUM_MONOTONIC: u32 = 3;
-/// `AggregationTemporality.AGGREGATION_TEMPORALITY_DELTA`.
-const DELTA: u64 = 1;
+/// `AggregationTemporality.AGGREGATION_TEMPORALITY_CUMULATIVE`.
+const CUMULATIVE: u64 = 2;
 /// `NumberDataPoint.start_time_unix_nano`, a `fixed64`.
 const POINT_START: u32 = 2;
 /// `NumberDataPoint.time_unix_nano`, a `fixed64`.
@@ -120,7 +129,7 @@ fn write_metric(
                 for point in points {
                     write_point(sum, &point, true, attributes);
                 }
-                write_varint(sum, SUM_TEMPORALITY, DELTA);
+                write_varint(sum, SUM_TEMPORALITY, CUMULATIVE);
                 write_varint(sum, SUM_MONOTONIC, 1);
             }),
         }
