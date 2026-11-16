@@ -34,6 +34,9 @@ transport-http = { package = "xmip-core-transport-http", git = "https://github.c
 [dev-dependencies]
 # The test cluster's names, from its `cluster.xmip` (`configure::fixture`).
 configure = { package = "xmip-core-configure", git = "https://github.com/IlleNilsson/xmip-core-configure", branch = "main", features = ["test-support"] }
+# The Clock the collector stand-in's one request counts an HTTP/2 exporter's
+# frames in a span on (`transport-http`'s `server::serve_one`).
+xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 
 [lints.rust]
 # forbid, not deny: a module has no business writing unsafe. The one exception

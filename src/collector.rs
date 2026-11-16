@@ -252,7 +252,8 @@ fn an_empty_snapshot_sends_a_resource_and_no_metric() {
 /// `answer`, and hand back what was posted.
 fn collect(listener: TcpListener, answer: Response) -> std::thread::JoinHandle<Request> {
     std::thread::spawn(move || {
-        transport_http::server::serve_one(&listener, Some(Duration::from_secs(5)), |request| {
+        let (within, clock) = (Some(Duration::from_secs(5)), Arc::new(xcore::SystemClock));
+        transport_http::server::serve_one(&listener, within, clock, |request| {
             (request.clone(), answer)
         })
         .expect("a request")
@@ -397,7 +398,7 @@ fn cost_of_one_export_of_a_thousand_scopes() {
         // every two milliseconds, which would be measured here as the
         // exporter's.
         let (stream, _) = listener.accept().expect("accepted");
-        transport_http::server::answer_on(stream, |_| {
+        transport_http::server::answer_on(stream, Arc::new(xcore::SystemClock), |_| {
             reached.push(began.elapsed());
             ((), Response::new(200))
         })
