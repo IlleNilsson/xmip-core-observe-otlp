@@ -35,7 +35,7 @@ as a trace.
 
 ## How it is sent
 
-`Exporter::start(Otlp)` starts a sender on a thread of its own. The node
+`Exporter::start(otlp, clock)` starts a sender on a thread of its own. The node
 hands it each snapshot it publishes, `Exporter::offer(Arc<Snapshot>)` —
 a lock and a handle, nothing written on the node's thread. The sender
 wakes at once, writes the request and posts it to the collector:
@@ -45,7 +45,12 @@ HTTP/1.1 otherwise, HTTP/2 over cleartext where `h2c` says the collector
 speaks it, and TLS for `https://` through `xmip-core-library-tls`. The
 endpoint is the collector's URL, port 4318 where it names none and
 `/v1/metrics` where it names no path; the body is
-`application/x-protobuf`.
+`application/x-protobuf`. An HTTP/2 collector's frames in a span are
+counted on `clock`, the node's Clock, handed in at the start
+(`Connections::timed_by`; ADR-0068, amendment 2026-11-17): a test steps
+`xcore::clock::Stepped` past the span while a collector floods `PING`s
+either side of it (`net::fixture::pinging::answering`), and sleeps for
+nothing.
 
 An export goes on every change, with no interval: OTLP asks for none, and
 a collector batches what it receives itself. One snapshot waits at a
@@ -71,9 +76,9 @@ a mood and every count, is 8,000 points and 663 kB.
 | A change reaching a collector on loopback | end to end | 1.2 ms | 1.5 ms |
 
 The request is written in one buffer, reused; an embedded message's length
-takes the one byte held for it or moves the message once. Each export opens
-a connection of its own: over TLS that is a handshake per export, and
-keeping one HTTP/2 connection to the collector is the next saving.
+takes the one byte held for it or moves the message once. The connection to
+the collector is kept between exports, so a handshake, TLS's included, is
+paid once and not per export.
 
 ## Toolchain
 

@@ -10,8 +10,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use message::protobuf::{Field, WireType, fields};
+use net::fixture::pinging::answering;
 use net::http::{Request, Response};
+use net::http2::Limits;
 use observe::{Count, Counted, Health, HealthRecord, Snapshot};
+use xcore::Clock;
+use xcore::clock::Stepped;
 
 use crate::metrics::write_request;
 use crate::{Exporter, Otlp, Resource};
@@ -252,12 +256,18 @@ fn an_empty_snapshot_sends_a_resource_and_no_metric() {
 /// `answer`, and hand back what was posted.
 fn collect(listener: TcpListener, answer: Response) -> std::thread::JoinHandle<Request> {
     std::thread::spawn(move || {
-        let (within, clock) = (Some(Duration::from_secs(5)), Arc::new(xcore::SystemClock));
-        transport_http::server::serve_one(&listener, within, clock, |request| {
+        let within = Some(Duration::from_secs(5));
+        transport_http::server::serve_one(&listener, within, system(), |request| {
             (request.clone(), answer)
         })
         .expect("a request")
     })
+}
+
+/// The operating system's Clock: an exporter's and a collector's that no
+/// test steps, as no node's.
+fn system() -> Arc<dyn Clock> {
+    Arc::new(xcore::SystemClock)
 }
 
 fn otlp(url: String, h2c: bool) -> Otlp {
@@ -279,7 +289,8 @@ fn loopback() -> (TcpListener, String) {
 fn an_export_is_posted_in_http_1_1_to_v1_metrics_as_protobuf() {
     let (listener, address) = loopback();
     let collector = collect(listener, Response::new(200));
-    let exporter = Exporter::start(otlp(format!("http://{address}"), false)).expect("start");
+    let exporter =
+        Exporter::start(otlp(format!("http://{address}"), false), &system()).expect("start");
     exporter.offer(Arc::new(snapshot(2)));
     let posted = collector.join().expect("collector");
     let tally = exporter.close();
@@ -301,7 +312,7 @@ fn a_collector_speaking_http_2_is_sent_in_http_2() {
     let (listener, address) = loopback();
     let collector = collect(listener, Response::new(200));
     let url = format!("http://{address}/otlp/v1/metrics");
-    let exporter = Exporter::start(otlp(url, true)).expect("start");
+    let exporter = Exporter::start(otlp(url, true), &system()).expect("start");
     exporter.offer(Arc::new(snapshot(2)));
     let posted = collector.join().expect("collector");
     let tally = exporter.close();
@@ -320,7 +331,8 @@ fn a_partial_success_and_an_absent_collector_are_counted_not_raised() {
         message::protobuf::write_delimited(partial, 2, b"too old");
     });
     let collector = collect(listener, Response::new(200).body(&answer));
-    let exporter = Exporter::start(otlp(format!("http://{address}"), false)).expect("start");
+    let exporter =
+        Exporter::start(otlp(format!("http://{address}"), false), &system()).expect("start");
     exporter.offer(Arc::new(snapshot(1)));
     collector.join().expect("collector");
     let tally = exporter.close();
@@ -329,11 +341,51 @@ fn a_partial_success_and_an_absent_collector_are_counted_not_raised() {
 
     let (gone, address) = loopback();
     drop(gone);
-    let exporter = Exporter::start(otlp(format!("http://{address}"), false)).expect("start");
+    let exporter =
+        Exporter::start(otlp(format!("http://{address}"), false), &system()).expect("start");
     exporter.offer(Arc::new(snapshot(1)));
     let tally = exporter.close();
     assert_eq!((tally.sent, tally.failed), (0, 1));
     assert!(tally.last_failure.is_some());
+}
+
+#[test]
+fn a_collector_s_frames_in_a_span_are_counted_on_the_clock_the_exporter_was_started_with() {
+    // A collector speaking HTTP/2 sends two runs of three fifths of the
+    // PINGs a span allows while the export waits for its answer: sent
+    // where a span passed on the clock between them, and failed, the
+    // connection calmed, on a clock that never moved.
+    let pings = u64::from(Limits::DEFAULT.control_frames) * 3 / 5;
+    for passed in [true, false] {
+        let clock = Arc::new(Stepped::default());
+        let stepped = Arc::clone(&clock);
+        let (listener, address) = loopback();
+        let collector = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accepted");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("a bound read");
+            let between = move || {
+                if passed {
+                    stepped.pass(Limits::DEFAULT.span);
+                }
+            };
+            answering(stream, pings, Box::new(between));
+        });
+        let handed: Arc<dyn Clock> = clock;
+        let exporter =
+            Exporter::start(otlp(format!("http://{address}"), true), &handed).expect("start");
+        exporter.offer(Arc::new(snapshot(1)));
+        let tally = exporter.close();
+        collector.join().expect("collector");
+
+        let sent = u64::from(passed);
+        assert_eq!((tally.sent, tally.failed), (sent, 1 - sent), "{tally:?}");
+        let calmed = tally
+            .last_failure
+            .is_some_and(|why| why.contains("PING and SETTINGS frames"));
+        assert_eq!(calmed, !passed, "{passed}");
+    }
 }
 
 #[test]
@@ -342,7 +394,8 @@ fn an_offer_never_waits_for_a_collector_that_does_not_answer() {
     // waits out its timeout. Every offer returns at once regardless, and an
     // offer made while one waits replaces it.
     let (listener, address) = loopback();
-    let exporter = Exporter::start(otlp(format!("http://{address}"), false)).expect("start");
+    let exporter =
+        Exporter::start(otlp(format!("http://{address}"), false), &system()).expect("start");
     let snapshot = Arc::new(snapshot(10));
     let began = Instant::now();
     for _ in 0..5 {
@@ -387,7 +440,8 @@ fn cost_of_one_export_of_a_thousand_scopes() {
     );
 
     let (listener, address) = loopback();
-    let exporter = Exporter::start(otlp(format!("http://{address}"), false)).expect("start");
+    let exporter =
+        Exporter::start(otlp(format!("http://{address}"), false), &system()).expect("start");
     let mut offered = Vec::new();
     let mut reached = Vec::new();
     for _ in 0..50 {
@@ -398,7 +452,7 @@ fn cost_of_one_export_of_a_thousand_scopes() {
         // every two milliseconds, which would be measured here as the
         // exporter's.
         let (stream, _) = listener.accept().expect("accepted");
-        transport_http::server::answer_on(stream, Arc::new(xcore::SystemClock), |_| {
+        transport_http::server::answer_on(stream, system(), |_| {
             reached.push(began.elapsed());
             ((), Response::new(200))
         })

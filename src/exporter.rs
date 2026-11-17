@@ -7,7 +7,9 @@
 //! at once, writes the request and posts it to the collector over
 //! `transport-http`'s `endpoint::Connections` — HTTP/2 where ALPN agrees
 //! it, HTTP/1.1 otherwise, TLS for `https://` — within the timeout it was
-//! given, on the connection the export before it opened. So an export goes on every change, with no interval: OTLP asks
+//! given, on the connection the export before it opened, an HTTP/2
+//! collector's frames in a span counted on the Clock it was started with,
+//! the node's. So an export goes on every change, with no interval: OTLP asks
 //! for none, and a collector batches what it receives itself. One snapshot
 //! waits at a time: one offered while one waits replaces it, the newer
 //! being the truer, and the replaced one is counted. A collector that is
@@ -22,6 +24,7 @@ use net::Endpoint;
 use net::http::Request;
 use observe::Snapshot;
 use transport_http::endpoint::{Connections, Offer};
+use xcore::Clock;
 
 use crate::metrics::write_request;
 use crate::resource::Resource;
@@ -99,12 +102,13 @@ pub struct Exporter {
 }
 
 impl Exporter {
-    /// Start the sender for `otlp`.
+    /// Start the sender for `otlp`, its HTTP/2 connection to the collector
+    /// counting the collector's frames in a span on `clock`, the node's.
     ///
     /// # Errors
     /// Where the endpoint is not an `http://` or `https://` URL, or the
     /// thread could not be started.
-    pub fn start(otlp: Otlp) -> Result<Self, String> {
+    pub fn start(otlp: Otlp, clock: &Arc<dyn Clock>) -> Result<Self, String> {
         let mut endpoint = Endpoint::parse(&otlp.endpoint)
             .map_err(|failure| failure.to_string())?
             .or_port(DEFAULT_PORT);
@@ -122,7 +126,7 @@ impl Exporter {
             h2c: otlp.h2c,
             timeout: otlp.timeout,
             resource: otlp.resource,
-            connections: Connections::new(),
+            connections: Connections::new().timed_by(clock),
         };
         let shared = Arc::clone(&outbox);
         let sender = std::thread::Builder::new()
